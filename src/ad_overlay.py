@@ -142,30 +142,14 @@ pts_dst = np.array([
     [ad_width, ad_height],   # Bottom-right corner
     [ad_width,0]           # Bottom-left corner
 ])
+#og
 ad_3D_coordinates = np.array([
      [13.77,6,0],   # top left
      [12.77,6,4],       # top right
      [12.77,12,4],     # bottom right
      [13.77,12,0]      # bottom left
 ],dtype=np.float32)
-offset = 0.5
-shadow_offset_x = 0.5  # Horizontal offset to the right
-shadow_offset_y = 0.5  # Horizontal offset forward/backward
-shadow_height = -0.1    # Slightly below the ground level
 
-# Calculate shadow vertices by applying offsets to the original coordinates
-shadow_vertices = np.array([
-    [ad_3D_coordinates[0][0] + shadow_offset_x, ad_3D_coordinates[0][1] + shadow_offset_y, shadow_height],  # top left shadow
-    [ad_3D_coordinates[1][0] + shadow_offset_x, ad_3D_coordinates[1][1] + shadow_offset_y, shadow_height],  # top right shadow
-    [ad_3D_coordinates[2][0] + shadow_offset_x, ad_3D_coordinates[2][1] + shadow_offset_y, shadow_height],  # bottom right shadow
-    [ad_3D_coordinates[3][0] + shadow_offset_x, ad_3D_coordinates[3][1] + shadow_offset_y, shadow_height]   # bottom left shadow
-], dtype=np.float32)
-shadow_3D = np.array([
-     [13.77,6,1],   # top left
-     [12.77,6,0],       # top right
-     [12.77,12,0],     # bottom right
-     [13.77,12,1]      # bottom left
-],dtype=np.float32)
 #court lines 
 obj_points = np.array([
     [0,0,0],            #1  bottom left
@@ -249,9 +233,10 @@ while cap.isOpened():
     ad_warped = cv2.warpPerspective(ad_image, h, (frame_width, frame_height))
     
     print('image points',image_pts)
-    shadow_offset_x = 100  # Horizontal offset to the right
-    shadow_offset_y = 100   # Vertical offset downward (this creates the shadow depth)
-    shadow_depth = 20      # Additional depth behind the banner
+    shadow_offset_x = 150  # Horizontal offset to the right
+    shadow_offset_y = 20   # Vertical offset downward (this creates the shadow depth)
+    shadow_offset_z = 10
+          # Additional depth behind the banner
 
     # Calculate shadow points by applying offsets
     shadow_points = image_pts.copy()
@@ -260,39 +245,38 @@ while cap.isOpened():
     shadow_points[3] = shadow_points[2]
     shadow_points[0,0] = shadow_points[0,0]-shadow_offset_x
     shadow_points[3,0] = shadow_points[2,0]-shadow_offset_x
+    shadow_points[0,1] = shadow_points[0,1]+shadow_offset_y
+    shadow_points[3,1] = shadow_points[2,1]+shadow_offset_y
+    shadow_points[1,1] = shadow_points[1,1]+shadow_offset_z
+    shadow_points[2,1] = shadow_points[2,1]+shadow_offset_z
     print('shadow_pts',shadow_points)
-    shadow_mask = np.zeros((height, width), dtype=np.uint8)
-    cv2.fillConvexPoly(shadow_mask, shadow_points.astype(np.int32), 255)  # Create shadow mask
 
-    # Apply Gaussian blur to the shadow mask to create a soft edge
-    shadow_mask = cv2.GaussianBlur(shadow_mask, (21, 21), 0)
+    shadow_mask = np.zeros((height, width, 3), dtype=np.uint8)
+    shadow_mask1 = np.zeros((height, width, 3), dtype=np.uint8)
+    cv2.fillConvexPoly(shadow_mask, shadow_points.astype(np.int32), (50, 50,50))  # Dark gray shadow
+    cv2.fillConvexPoly(shadow_mask1, shadow_points.astype(np.int32), (5, 5,5))  # Dark gray shadow
+    shadow_mask = cv2.GaussianBlur(shadow_mask, (35, 35), 0)
+    
+    # Create a mask for blending
+    shadow_alpha = shadow_mask[..., 0] / 255.0  # Normalize to [0, 1]
+    shadow_alpha = shadow_alpha[..., np.newaxis]  # Make it 3-channel
 
-    # Create a color shadow using the blurred mask
-    shadow_color = (0, 0, 0)  # Black shadow
-    shadow_bgr = np.zeros_like(frame)
-    shadow_bgr[:, :] = shadow_color
-    shadow_bgr = cv2.bitwise_and(shadow_bgr, shadow_bgr, mask=shadow_mask)
-    # Blend the shadow onto the frame using the mask
-    frame = cv2.addWeighted(frame, 1.0, shadow_bgr, 0.5, 0)  # Adjust alpha for shadow intensity
-    frame = cv2.add(frame, cv2.cvtColor(shadow_mask, cv2.COLOR_GRAY2BGR))
-    # cv2.fillConvexPoly(frame, shadow_points, (0, 0, 0), lineType=cv2.LINE_AA)  # Black shadow
+    # Blend the shadow with the frame
+    # frame = frame.astype(np.float32)
+    blended = frame * (1 - shadow_alpha) + shadow_mask1 * shadow_alpha
+
+    # Draw the original banner on top of the shadow
+    
+
+    # Convert back to uint8
+    frame = np.clip(blended, 0, 255).astype(np.uint8)
     mask = np.zeros_like(frame, dtype=np.uint8)
     cv2.fillConvexPoly(mask, image_pts, (255, 255, 255))
     frame = cv2.bitwise_and(frame, cv2.bitwise_not(mask))
     frame = cv2.bitwise_or(frame, ad_warped)
-    # image_pts, _ = cv2.projectPoints(shadow_3D, new_rvec, new_tvec, intrinsic_par, dist_coeffs)
-    # image_pts = np.reshape(image_pts.astype(int),[-1,2])
-    # h, status = cv2.findHomography(pts_dst, image_pts,cv2.RANSAC,5)
-    # ad_warped1 = cv2.warpPerspective(ad_image, h, (frame_width, frame_height))
-    # cv2.fillConvexPoly(frame, image_pts, (0, 0, 0), lineType=cv2.LINE_AA) 
-    # cv2.fillConvexPoly(mask, image_pts, (255, 255, 255))
-    # frame = cv2.bitwise_and(frame, cv2.bitwise_not(mask))
-    # frame = cv2.bitwise_or(frame, ad_warped1)
     
-
-
-    cv2.imshow('before',gray)
     cv2.imshow('after',frame)
+    
     key = cv2.waitKey(25)
     if key == ord('p'):
         print("Paused. Press any key to continue...")
