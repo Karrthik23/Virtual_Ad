@@ -1,0 +1,10 @@
+{
+    "terminal.integrated.profiles.linux": {
+   "bash": {
+      "path": "bash",
+      "args": ["-c", "cd /home/nothecats/Documents/twente/computer_vision/project/src && exec bash"]
+   }
+},
+"terminal.integrated.defaultProfile.linux": "bash"
+
+}
