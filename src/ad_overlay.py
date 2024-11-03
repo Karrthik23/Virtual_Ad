@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import os
 #%%
 
-def _classify_lines(lines):
+def _classify_lines(lines,previous1,previous2):
         """
         Classify line to vertical and horizontal lines
         """
@@ -13,9 +13,14 @@ def _classify_lines(lines):
         vertical = []
         highest_vertical_y = np.inf
         lowest_vertical_y = 0
+        lowest_vertical_y1 = np.inf
         lowest_vertical_x = np.inf
-        i=0
+        rightmost_vertical = None
+        xs = 0
+        ys = 0
+        print('start')
         for line in lines:
+            
             x1, y1, x2, y2 = line[0]
             dx = abs(x1 - x2)
             dy = abs(y1 - y2)
@@ -25,11 +30,31 @@ def _classify_lines(lines):
             else:
                 # print('vertical')
                 vertical.append(line[0])
+                # print(line)
                 highest_vertical_y = min(highest_vertical_y, y1, y2)
                 lowest_vertical_y = max(lowest_vertical_y, y1, y2)
-                if lowest_vertical_x > x1:
+                if lowest_vertical_x > x1 and ys<y1:
                      leftmost_vertical = line[0]
                      lowest_vertical_x = x1
+                     ys =y1
+                if rightmost_vertical is None or lowest_vertical_y1 >= y1 and xs<x1:
+                    rightmost_vertical = line[0]
+                    lowest_vertical_y1 = y1
+                    xs = x1
+                    # print(rightmost_vertical)
+                    # print(abs(previous[1]-y1))
+        # if previous1 is not None :
+        #     if abs(previous1[1]-rightmost_vertical[1])>10:
+        #         print(rightmost_vertical)
+        #         print('inside update:')
+        #         print(previous1)
+        #         rightmost_vertical = previous1
+        # if previous2 is not None :
+        #     if abs(previous2[0]-leftmost_vertical[0])>10:
+        #         print(leftmost_vertical)
+        #         print('inside update:')
+        #         print(previous2)
+        #         leftmost_vertical = previous2
         clean_horizontal = []
         h = lowest_vertical_y - highest_vertical_y
         lowest_vertical_y += h / 15
@@ -38,7 +63,7 @@ def _classify_lines(lines):
             x1, y1, x2, y2 = line
             if lowest_vertical_y > y1 > highest_vertical_y and lowest_vertical_y > y1 > highest_vertical_y:
                 clean_horizontal.append(line)
-        return clean_horizontal, vertical,leftmost_vertical
+        return clean_horizontal, vertical,leftmost_vertical, rightmost_vertical
         # return horizontal, vertical
 def location(line):
     x1,y1,x2,y2 = line
@@ -78,17 +103,20 @@ obj_pts = np.array(
      [1,0,0],
      [1,1,0]]
 )
-
+previous1 = None
+previous2 = None
 cap = cv2.VideoCapture('../input/tennis_1.mp4')
 dist_tau =3
 intensity_threshold = 40
-minLineLength = 200
-maxLineGap = 50
+minLineLength = 300
+maxLineGap = 60
 ad_image = cv2.imread('../input/num.png')
 ad_height, ad_width = ad_image.shape[:2]
 cam_matirx = np.load('../input/camera_matrix.npz')
 intrinsic_par = cam_matirx['camera_mat']
 dist_coeffs = cam_matirx['dist_coeffs']
+c_lw_th = 50
+c_hg_th = 80
 pts_dst = np.array([
     [0, 0],                  # Top-left corner
     [ad_width, 0],           # Top-right corner
@@ -111,39 +139,31 @@ while cap.isOpened():
     if not ret:
         print('Wrong Path')
         break
+    gray = cv2.GaussianBlur(frame,(5,5), 0)
     gray = cv2.cvtColor(frame,cv2.COLOR_BGR2GRAY)
-    p1, st, err = cv2.calcOpticalFlowPyrLK(old_gray, gray, p0, None, **lk_params)
-    
-    # Select good points
-    good_new = p1[st == 1]
-    good_old = p0[st == 1]
-    print(good_new)
-    # Compute the camera pose based on the tracked points
-    if len(good_new) > 4:  # We need at least 4 points to compute homography
-        # Compute homography
-        h, _ = cv2.findHomography(good_old, good_new, cv2.RANSAC, 5.0)
-        print(h)
-        # Update camera pose using the tracked points
-        success, rvec, tvec = cv2.solvePnPRansac(obj_pts, good_new, intrinsic_par, dist_coeffs)
-        if not success:
-            continue
-    
     gray = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)[1]
-    cv2.imshow('before',gray)
-    edges = cv2.Canny(gray,100,150,apertureSize=3)
-    lines = cv2.HoughLinesP(gray, 1, np.pi / 180, 80, minLineLength=minLineLength, maxLineGap=maxLineGap)
+    kernel = np.ones((4, 4), np.uint8)
+    gray = cv2.dilate(gray, kernel, iterations=1)
+    kernel = np.ones((3, 3), np.uint8)
+    gray = cv2.erode(gray, kernel, iterations=1)
     
-    horizontal, vertical,leftmost_vertical = _classify_lines(lines)
+    lines = cv2.HoughLinesP(gray, 1, np.pi / 180, threshold=120, minLineLength=minLineLength, maxLineGap=maxLineGap)
+    
+    horizontal, vertical,left,right= _classify_lines(lines,previous1,previous2)
+    previous1 = right
+    previous2 = left
+    print('previous2')
+    print(previous2)
     for line in horizontal:
-            x1, y1, x2, y2 = line
-            cv2.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 2) 
+            x1, y1, x2, y2 = left
+            cv2.line(frame, (x1, y1), (x2, y2), (0, 0, 255), 2) 
 
     for line in vertical:
-        x1, y1, x2, y2 = leftmost_vertical
+        x1, y1, x2, y2 = right
         cv2.line(frame, (x1, y1), (x2, y2), (0, 0, 255), 2) 
-    a = location(leftmost_vertical)  
+    a = location(left)  
     pts_src =a
-    print(a)
+    
     x_1,y_1 =a[0]
     x_2,y_2 =a[1]
     x_3,y_3 =a[2]
@@ -159,32 +179,12 @@ while cap.isOpened():
     # Create a mask for the advertisement
     mask = np.zeros((frame_height, frame_width), dtype=np.uint8)
     cv2.fillConvexPoly(mask, pts_src.astype(int), 255)
-
-    # Mask the frame to remove the area where the ad will go
     masked_frame = cv2.bitwise_and(frame, frame, mask=cv2.bitwise_not(mask))
-
-    # Combine the warped advertisement with the masked frame
     result = cv2.add(masked_frame, ad_warped)
-    banner_points_2d, _ = cv2.projectPoints(obj_pts, rvec, tvec, intrinsic_par, dist_coeffs)
-    if h is not None:
-        # Project the 3D banner points to 2D image plane
-        banner_points_2d, _ = cv2.projectPoints(obj_pts, rvec, tvec, intrinsic_par, dist_coeffs)
-        
-        # Convert projected points to integer values for use in warping
-        pts_dst = np.int32(banner_points_2d).reshape(-1, 2)
-        
-        # Perform perspective warp on the banner image
-        ad_warped = cv2.warpPerspective(ad_image, h, (frame.shape[1], frame.shape[0]))
-
-        # Create a mask of the banner region and combine with the frame
-        mask = np.zeros_like(frame, dtype=np.uint8)
-        cv2.fillConvexPoly(mask, pts_dst, (255, 255, 255))
-
-        # Combine the warped ad image with the current frame
-        frame = cv2.bitwise_and(frame, cv2.bitwise_not(mask))
-        frame = cv2.bitwise_or(frame, ad_warped)
-    cv2.imshow('before',result)
-    cv2.imshow('after',frame)
+    
+   
+    cv2.imshow('before',gray)
+    cv2.imshow('after',result)
     if cv2.waitKey(25) & 0xFF == ord('q'):
         break
 # %%
