@@ -118,7 +118,7 @@ previous2 = None
 cap = cv2.VideoCapture('../input/tennis_1.mp4')
 dist_tau =3
 intensity_threshold = 40
-minLineLength = 300
+minLineLength = 200
 maxLineGap = 60
 ad_image = cv2.imread('../input/download.jpeg')
 ad_image1 = cv2.imread('../input/num.png')
@@ -148,11 +148,23 @@ ad_3D_coordinates = np.array([
      [12.77,12,4],     # bottom right
      [13.77,12,0]      # bottom left
 ],dtype=np.float32)
-shadow_3D_coordinates = np.array([
-     [14.27,6,0],   # top left
-     [12.77,6,2],       # top right
-     [12.77,12,2],     # bottom right
-     [14.27,12,0]      # bottom left
+offset = 0.5
+shadow_offset_x = 0.5  # Horizontal offset to the right
+shadow_offset_y = 0.5  # Horizontal offset forward/backward
+shadow_height = -0.1    # Slightly below the ground level
+
+# Calculate shadow vertices by applying offsets to the original coordinates
+shadow_vertices = np.array([
+    [ad_3D_coordinates[0][0] + shadow_offset_x, ad_3D_coordinates[0][1] + shadow_offset_y, shadow_height],  # top left shadow
+    [ad_3D_coordinates[1][0] + shadow_offset_x, ad_3D_coordinates[1][1] + shadow_offset_y, shadow_height],  # top right shadow
+    [ad_3D_coordinates[2][0] + shadow_offset_x, ad_3D_coordinates[2][1] + shadow_offset_y, shadow_height],  # bottom right shadow
+    [ad_3D_coordinates[3][0] + shadow_offset_x, ad_3D_coordinates[3][1] + shadow_offset_y, shadow_height]   # bottom left shadow
+], dtype=np.float32)
+shadow_3D = np.array([
+     [13.77,6,1],   # top left
+     [12.77,6,0],       # top right
+     [12.77,12,0],     # bottom right
+     [13.77,12,1]      # bottom left
 ],dtype=np.float32)
 #court lines 
 obj_points = np.array([
@@ -168,8 +180,7 @@ light_direction = np.array([1, -1,0])  # Direction of light (e.g., to the right 
 shadow_length = 50  # Adjust based on desired shadow length
 
 # Draw the banner with shadow
-shadow_coordinate = draw_banner_with_shadow(ad_3D_coordinates, shadow_length, light_direction)
-print(shadow_coordinate)
+# print(shadow_3D_coordinates)
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
@@ -210,15 +221,12 @@ while cap.isOpened():
     lines = cv2.HoughLinesP(gray, 1, np.pi / 180, threshold=120, minLineLength=minLineLength, maxLineGap=maxLineGap)
     p1, st, err = cv2.calcOpticalFlowPyrLK(old_gray, gray, p0, None, **lk_params)
 
-    # Select good points
+
     good_new = p1[st == 1]
     good_old = p0[st == 1]
-
-    # Update the old frame and points
     old_gray = gray.copy()
     p0 = good_new.reshape(-1, 1, 2)
     img_pts = good_new
-    print(img_pts)
     horizontal, vertical,left,right= _classify_lines(lines)
     for line in horizontal:
             x1, y1, x2, y2 = line
@@ -231,8 +239,6 @@ while cap.isOpened():
 
     
     new_rvec,new_tvec = cam_pose(img_pts,obj_points,intrinsic_par,dist_coeffs)
-    smoothed_rvec = alpha * new_rvec + (1 - alpha) * smoothed_rvec
-    smoothed_tvec = alpha * new_tvec + (1 - alpha) * smoothed_tvec
     
     image_pts, _ = cv2.projectPoints(ad_3D_coordinates, new_rvec, new_tvec, intrinsic_par, dist_coeffs)
     image_pts = np.reshape(image_pts.astype(int),[-1,2])
@@ -241,22 +247,49 @@ while cap.isOpened():
     smoothed_homography = alpha * h + (1 - alpha) * smoothed_homography
     frame_height, frame_width = frame.shape[:2]
     ad_warped = cv2.warpPerspective(ad_image, h, (frame_width, frame_height))
+    
+    print('image points',image_pts)
+    shadow_offset_x = 100  # Horizontal offset to the right
+    shadow_offset_y = 100   # Vertical offset downward (this creates the shadow depth)
+    shadow_depth = 20      # Additional depth behind the banner
+
+    # Calculate shadow points by applying offsets
+    shadow_points = image_pts.copy()
+    print(shadow_points[0,0])
+    shadow_points[0] = shadow_points[1]
+    shadow_points[3] = shadow_points[2]
+    shadow_points[0,0] = shadow_points[0,0]-shadow_offset_x
+    shadow_points[3,0] = shadow_points[2,0]-shadow_offset_x
+    print('shadow_pts',shadow_points)
+    shadow_mask = np.zeros((height, width), dtype=np.uint8)
+    cv2.fillConvexPoly(shadow_mask, shadow_points.astype(np.int32), 255)  # Create shadow mask
+
+    # Apply Gaussian blur to the shadow mask to create a soft edge
+    shadow_mask = cv2.GaussianBlur(shadow_mask, (21, 21), 0)
+
+    # Create a color shadow using the blurred mask
+    shadow_color = (0, 0, 0)  # Black shadow
+    shadow_bgr = np.zeros_like(frame)
+    shadow_bgr[:, :] = shadow_color
+    shadow_bgr = cv2.bitwise_and(shadow_bgr, shadow_bgr, mask=shadow_mask)
+    # Blend the shadow onto the frame using the mask
+    frame = cv2.addWeighted(frame, 1.0, shadow_bgr, 0.5, 0)  # Adjust alpha for shadow intensity
+    frame = cv2.add(frame, cv2.cvtColor(shadow_mask, cv2.COLOR_GRAY2BGR))
+    # cv2.fillConvexPoly(frame, shadow_points, (0, 0, 0), lineType=cv2.LINE_AA)  # Black shadow
     mask = np.zeros_like(frame, dtype=np.uint8)
     cv2.fillConvexPoly(mask, image_pts, (255, 255, 255))
     frame = cv2.bitwise_and(frame, cv2.bitwise_not(mask))
     frame = cv2.bitwise_or(frame, ad_warped)
-
-    # image_pts, _ = cv2.projectPoints(shadow_3D_coordinates, new_rvec, new_tvec, intrinsic_par, dist_coeffs)
+    # image_pts, _ = cv2.projectPoints(shadow_3D, new_rvec, new_tvec, intrinsic_par, dist_coeffs)
     # image_pts = np.reshape(image_pts.astype(int),[-1,2])
     # h, status = cv2.findHomography(pts_dst, image_pts,cv2.RANSAC,5)
-    # ad_warped1 = cv2.warpPerspective(ad_image1, h, (frame_width, frame_height))
-    # mask = np.zeros_like(frame, dtype=np.uint8)
-    # print(frame.shape)
-    # print(ad_warped.shape)
+    # ad_warped1 = cv2.warpPerspective(ad_image, h, (frame_width, frame_height))
+    # cv2.fillConvexPoly(frame, image_pts, (0, 0, 0), lineType=cv2.LINE_AA) 
     # cv2.fillConvexPoly(mask, image_pts, (255, 255, 255))
     # frame = cv2.bitwise_and(frame, cv2.bitwise_not(mask))
     # frame = cv2.bitwise_or(frame, ad_warped1)
-    # frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    
+
 
     cv2.imshow('before',gray)
     cv2.imshow('after',frame)
