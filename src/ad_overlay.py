@@ -121,7 +121,7 @@ def shadow_plot(ip_frame,shadow_points,height=None,width = None):
     return out_frame
 # loading  video and ad banner
 cap = cv2.VideoCapture('../input/tennis_1.mp4')
-ad_image = cv2.imread('../input/download.jpeg')
+ad_image = cv2.imread('../input/banner.jpeg')
 # extracting the height and width of ad banner 
 # used later
 ad_height, ad_width = ad_image.shape[:2]
