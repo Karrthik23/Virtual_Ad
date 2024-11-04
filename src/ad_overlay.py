@@ -91,7 +91,6 @@ def shadow_plot(ip_frame,shadow_points,height=None,width = None):
     shadow_offset_z = 10    # additional depth behind the banner
 
     # calculating the shadow pts based on image points
-    print(shadow_points[0,0])
     shadow_points[0] = shadow_points[1]
     shadow_points[3] = shadow_points[2]
     shadow_points[0,0] = shadow_points[0,0]-shadow_offset_x
